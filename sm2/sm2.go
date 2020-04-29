@@ -30,7 +30,7 @@ import (
 	"io"
 	"math/big"
 
-	"github.com/zcqzcg/gmsm/sm3"
+	"github.com/tjfoc/gmsm/sm3"
 )
 
 const (
@@ -58,6 +58,16 @@ func (priv *PrivateKey) Public() crypto.PublicKey {
 
 func SignDigitToSignData(r, s *big.Int) ([]byte, error) {
 	return asn1.Marshal(sm2Signature{r, s})
+}
+
+func SignDataToSignDigit(sign []byte) (*big.Int, *big.Int, error) {
+	var sm2Sign sm2Signature
+
+	_, err := asn1.Unmarshal(sign, &sm2Sign)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sm2Sign.R, sm2Sign.S, nil
 }
 
 // sign format = 30 + len(z) + 02 + len(r) + r + 02 + len(s) + s, z being what follows its size, ie 02+len(r)+r+02+len(s)+s
@@ -202,9 +212,10 @@ func Sign(priv *PrivateKey, hash []byte) (r, s *big.Int, err error) {
 			r.Add(r, e)
 			r.Mod(r, N)
 			if r.Sign() != 0 {
-				if t := new(big.Int).Add(r, k); t.Cmp(N) != 0 {
-					break
-				}
+				break
+			}
+			if t := new(big.Int).Add(r, k); t.Cmp(N) == 0 {
+				break
 			}
 		}
 		rD := new(big.Int).Mul(priv.D, r)
@@ -275,9 +286,10 @@ func Sm2Sign(priv *PrivateKey, msg, uid []byte) (r, s *big.Int, err error) {
 			r.Add(r, e)
 			r.Mod(r, N)
 			if r.Sign() != 0 {
-				if t := new(big.Int).Add(r, k); t.Cmp(N) != 0 {
-					break
-				}
+				break
+			}
+			if t := new(big.Int).Add(r, k); t.Cmp(N) == 0 {
+				break
 			}
 		}
 		rD := new(big.Int).Mul(priv.D, r)
@@ -352,7 +364,7 @@ func ZA(pub *PublicKey, uid []byte) ([]byte, error) {
 	xBuf := pub.X.Bytes()
 	yBuf := pub.Y.Bytes()
 	if n := len(xBuf); n < 32 {
-		xBuf = append(zeroByteSlice[:32-n], xBuf...)
+		xBuf = append(zeroByteSlice()[:32-n], xBuf...)
 	}
 	za.Write(xBuf)
 	za.Write(yBuf)
@@ -360,15 +372,17 @@ func ZA(pub *PublicKey, uid []byte) ([]byte, error) {
 }
 
 // 32byte
-var zeroByteSlice = []byte{
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
+func zeroByteSlice() []byte {
+	return []byte{
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+	}
 }
 
 /*
@@ -394,16 +408,16 @@ func Encrypt(pub *PublicKey, data []byte) ([]byte, error) {
 		x2Buf := x2.Bytes()
 		y2Buf := y2.Bytes()
 		if n := len(x1Buf); n < 32 {
-			x1Buf = append(zeroByteSlice[:32-n], x1Buf...)
+			x1Buf = append(zeroByteSlice()[:32-n], x1Buf...)
 		}
 		if n := len(y1Buf); n < 32 {
-			y1Buf = append(zeroByteSlice[:32-n], y1Buf...)
+			y1Buf = append(zeroByteSlice()[:32-n], y1Buf...)
 		}
 		if n := len(x2Buf); n < 32 {
-			x2Buf = append(zeroByteSlice[:32-n], x2Buf...)
+			x2Buf = append(zeroByteSlice()[:32-n], x2Buf...)
 		}
 		if n := len(y2Buf); n < 32 {
-			y2Buf = append(zeroByteSlice[:32-n], y2Buf...)
+			y2Buf = append(zeroByteSlice()[:32-n], y2Buf...)
 		}
 		c = append(c, x1Buf...) // x分量
 		c = append(c, y1Buf...) // y分量
@@ -421,11 +435,12 @@ func Encrypt(pub *PublicKey, data []byte) ([]byte, error) {
 		for i := 0; i < length; i++ {
 			c[96+i] ^= data[i]
 		}
-		return c, nil
+		return append([]byte{0x04}, c...), nil
 	}
 }
 
 func Decrypt(priv *PrivateKey, data []byte) ([]byte, error) {
+	data = data[1:]
 	length := len(data) - 96
 	curve := priv.Curve
 	x := new(big.Int).SetBytes(data[:32])
@@ -434,12 +449,11 @@ func Decrypt(priv *PrivateKey, data []byte) ([]byte, error) {
 	x2Buf := x2.Bytes()
 	y2Buf := y2.Bytes()
 	if n := len(x2Buf); n < 32 {
-		x2Buf = append(zeroByteSlice[:32-n], x2Buf...)
+		x2Buf = append(zeroByteSlice()[:32-n], x2Buf...)
 	}
 	if n := len(y2Buf); n < 32 {
-		y2Buf = append(zeroByteSlice[:32-n], y2Buf...)
+		y2Buf = append(zeroByteSlice()[:32-n], y2Buf...)
 	}
-
 	c, ok := kdf(x2Buf, y2Buf, length)
 	if !ok {
 		return nil, errors.New("Decrypt: failed to decrypt")
@@ -470,3 +484,43 @@ func (z *zr) Read(dst []byte) (n int, err error) {
 }
 
 var zeroReader = &zr{}
+
+func getLastBit(a *big.Int) uint {
+	return a.Bit(0)
+}
+
+func Compress(a *PublicKey) []byte {
+	buf := []byte{}
+	yp := getLastBit(a.Y)
+	buf = append(buf, a.X.Bytes()...)
+	if n := len(a.X.Bytes()); n < 32 {
+		buf = append(zeroByteSlice()[:(32-n)], buf...)
+	}
+	buf = append([]byte{byte(yp)}, buf...)
+	return buf
+}
+
+func Decompress(a []byte) *PublicKey {
+	var aa, xx, xx3 sm2P256FieldElement
+
+	P256Sm2()
+	x := new(big.Int).SetBytes(a[1:])
+	curve := sm2P256
+	sm2P256FromBig(&xx, x)
+	sm2P256Square(&xx3, &xx)       // x3 = x ^ 2
+	sm2P256Mul(&xx3, &xx3, &xx)    // x3 = x ^ 2 * x
+	sm2P256Mul(&aa, &curve.a, &xx) // a = a * x
+	sm2P256Add(&xx3, &xx3, &aa)
+	sm2P256Add(&xx3, &xx3, &curve.b)
+
+	y2 := sm2P256ToBig(&xx3)
+	y := new(big.Int).ModSqrt(y2, sm2P256.P)
+	if getLastBit(y) != uint(a[0]) {
+		y.Sub(sm2P256.P, y)
+	}
+	return &PublicKey{
+		Curve: P256Sm2(),
+		X:     x,
+		Y:     y,
+	}
+}

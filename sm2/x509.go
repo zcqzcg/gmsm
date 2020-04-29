@@ -42,7 +42,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/zcqzcg/gmsm/sm3"
+	"github.com/tjfoc/gmsm/sm3"
 	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/crypto/sha3"
 )
@@ -972,16 +972,21 @@ func checkSignature(algo SignatureAlgorithm, signed, signature []byte, publicKey
 
 	switch algo {
 	case SHA1WithRSA, DSAWithSHA1, ECDSAWithSHA1, SM2WithSHA1:
+		fmt.Println("SHA1")
 		hashType = SHA1
 	case SHA256WithRSA, SHA256WithRSAPSS, DSAWithSHA256, ECDSAWithSHA256, SM2WithSHA256:
+		fmt.Println("SHA256")
 		hashType = SHA256
 	case SHA384WithRSA, SHA384WithRSAPSS, ECDSAWithSHA384:
+		fmt.Println("SHA384")
 		hashType = SHA384
 	case SHA512WithRSA, SHA512WithRSAPSS, ECDSAWithSHA512:
+		fmt.Println("SHA512")
 		hashType = SHA512
 	case MD2WithRSA, MD5WithRSA:
 		return InsecureAlgorithmError(algo)
 	case SM2WithSM3: // SM3WithRSA reserve
+		fmt.Println("SM3")
 		hashType = SM3
 	default:
 		return ErrUnsupportedAlgorithm
@@ -1038,6 +1043,27 @@ func checkSignature(algo SignatureAlgorithm, signed, signature []byte, publicKey
 		default:
 			if !ecdsa.Verify(pub, digest, ecdsaSig.R, ecdsaSig.S) {
 				return errors.New("x509: ECDSA verification failure")
+			}
+		}
+		return
+	case *PublicKey:
+		ecdsaSig := new(ecdsaSignature)
+		if rest, err := asn1.Unmarshal(signature, ecdsaSig); err != nil {
+			return err
+		} else if len(rest) != 0 {
+			return errors.New("x509: trailing data after ECDSA signature")
+		}
+		if ecdsaSig.R.Sign() <= 0 || ecdsaSig.S.Sign() <= 0 {
+			return errors.New("x509: ECDSA signature contained zero or negative values")
+		}
+		switch pub.Curve {
+		case P256Sm2():
+			if !Verify(&PublicKey{
+				Curve: pub.Curve,
+				X:     pub.X,
+				Y:     pub.Y,
+			}, digest, ecdsaSig.R, ecdsaSig.S) {
+				return errors.New("x509: SM2 verification failure")
 			}
 		}
 		return
@@ -1178,7 +1204,8 @@ func parsePublicKey(algo PublicKeyAlgorithm, keyData *publicKeyInfo) (interface{
 		if x == nil {
 			return nil, errors.New("x509: failed to unmarshal elliptic curve point")
 		}
-		pub := &ecdsa.PublicKey{
+
+		pub := &PublicKey{
 			Curve: namedCurve,
 			X:     x,
 			Y:     y,
@@ -2376,7 +2403,7 @@ func ParseCertificateRequest(asn1Data []byte) (*CertificateRequest, error) {
 
 func parseCertificateRequest(in *certificateRequest) (*CertificateRequest, error) {
 	out := &CertificateRequest{
-		Raw:                      in.Raw,
+		Raw: in.Raw,
 		RawTBSCertificateRequest: in.TBSCSR.Raw,
 		RawSubjectPublicKeyInfo:  in.TBSCSR.PublicKey.Raw,
 		RawSubject:               in.TBSCSR.Subject.FullBytes,
